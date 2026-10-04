@@ -1,0 +1,31 @@
+<!--
+Konfigurasi Windows Service via WinSW.
+File ini disalin oleh install.ps1 ke folder instalasi dengan nama
+RSCBDeploymentAgent.exe.config sesuai konvensi WinSW
+(RSCBDeploymentAgent.exe + RSCBDeploymentAgent.xml).
+-->
+<service>
+  <id>RSCBDeploymentAgent</id>
+  <name>RSCB Deployment Agent</name>
+  <description>Agent distribusi update SIMRS dari RSCB Deployment Server.</description>
+
+  <!-- Runtime Java privat (jlink) — komputer unit tidak butuh Java global. -->
+  <executable>runtime\jlink-image\bin\java.exe</executable>
+  <arguments>-jar agent.jar --config config.yml</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+
+  <startmode>Automatic</startmode>
+  <delayedautostart>true</delayedautostart>
+
+  <!-- Agent dimulai ulang bila mati tanpa sengaja; jangan di-restart
+       cepat-cepat bila server belum siap — delay 30 detik. -->
+  <onfailure action="restart" delay="30 sec"/>
+
+  <log mode="roll-by-size">
+    <logPath>%BASE%\logs\service</logPath>
+    <sizeThreshold>5120</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+
+  <stopparentprocessfirst>true</stopparentprocessfirst>
+</service>
