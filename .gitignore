@@ -1,0 +1,22 @@
+# Build output
+build/
+out/
+
+# Gradle
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Runtime artifacts (tidak pernah masuk repo)
+logs/
+agent-state.json
+agent-state.json.tmp
+config.yml
+
+# Bundled runtime & installer payload diunduh saat build
+runtime/jlink-image/
+runtime/Downloads/
+installer/tools/
