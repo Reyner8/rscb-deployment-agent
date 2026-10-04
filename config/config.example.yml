@@ -1,0 +1,38 @@
+# Konfigurasi RSCB Deployment Agent.
+# Salin file ini ke lokasi konfigurasi agent lalu sesuaikan nilainya.
+#
+# Lokasi default:
+#   Windows : %PROGRAMDATA%\RSCB\DeploymentAgent\config.yml
+#   Lainnya : ./config.yml
+# Override saat menjalankan: java -jar agent.jar --config /path/config.yml
+
+server:
+  # Base URL backend deployment (tanpa /api/v1).
+  baseUrl: "http://192.168.1.10:3000"
+  # Timeout HTTP per request (detik).
+  timeoutSeconds: 30
+
+intervals:
+  # Heartbeat tiap 60 detik; server menganggap device OFFLINE setelah
+  # 5 menit tanpa heartbeat, jangan lebih lambat dari itu.
+  heartbeatSeconds: 60
+  # Cek update tiap 5 menit + jitter acak agar device tidak serempak.
+  updateCheckSeconds: 300
+
+application:
+  # Lokasi instalasi SIMRS pada komputer unit (WAJIB, tidak boleh hard-coded).
+  path: "C:\\RSCB\\SIMRS"
+  # Launcher yang dijalankan kembali setelah instalasi selesai.
+  launcher: "run.bat"
+
+deployment:
+  # Batas waktu agent menunggu SIMRS ditutup user saat status WAITING.
+  # Setelah lewat, deployment dilaporkan FAILED dan akan dicoba lagi
+  # pada siklus cek update berikutnya.
+  maxWaitMinutes: 120
+  # Interval polling menunggu SIMRS ditutup (detik).
+  waitPollSeconds: 30
+
+backup:
+  # Jumlah backup instalasi sebelumnya yang dipertahankan.
+  keep: 1
