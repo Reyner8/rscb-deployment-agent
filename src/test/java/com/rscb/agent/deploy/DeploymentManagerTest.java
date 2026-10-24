@@ -1,5 +1,6 @@
 package com.rscb.agent.deploy;
 
+import com.rscb.agent.api.ApiException;
 import com.rscb.agent.api.Dto;
 import com.rscb.agent.config.AgentConfig;
 import com.rscb.agent.state.AgentState;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -207,6 +207,52 @@ class DeploymentManagerTest {
     }
 
     @Test
+    void deploymentAktifDiprosesWalauHasUpdateFalse() throws IOException {
+        // Regresi: deployment yang terlewat (agent mati di tengah alur) kini
+        // dikirim server setiap polling dengan hasUpdate=false; agent harus
+        // tetap melanjutkannya, bukan mengabaikannya.
+        newManager((path, launcher) -> started.set(true), detector())
+                .handle(new Dto.UpdatesResponse(
+                        false, "2.0.0", "/api/v1/agents/artifacts/rel-1/download-url",
+                        "dep-1", "2.0.0", "ASSIGNED"));
+
+        assertEquals(
+                List.of("DOWNLOADING", "VERIFYING", "INSTALLING", "STARTING", "SUCCESS"),
+                api.statusSequence);
+        assertEquals("2.0.0", state.getCurrentVersion());
+    }
+
+    @Test
+    void laporanDitolakServerTercatatDiStateDanProsesLokalTetapSelesai() throws IOException {
+        // Regresi: penolakan 4xx dari server dulu di-swallow diam-diam; kini
+        // dicatat di state (lastReportError) tanpa menggagalkan instalasi yang
+        // sudah selesai secara lokal.
+        api.reportError = new ApiException(403, "deployment bukan milik device ini");
+
+        newManager((path, launcher) -> started.set(true), detector()).handle(updates("dep-1", "ASSIGNED"));
+
+        assertEquals(
+                List.of("DOWNLOADING", "VERIFYING", "INSTALLING", "STARTING", "SUCCESS"),
+                api.statusSequence);
+        assertEquals("versi-baru", Files.readString(appPath.resolve("application.jar")));
+        assertEquals("SUCCESS", state.getLastDeploymentResult());
+        assertTrue(state.getLastReportError().contains("403"),
+                "penolakan server harus tercatat di state");
+    }
+
+    @Test
+    void pathRelatifDariDownloadInfoDiteruskanVerbatimKeApiClient() throws IOException {
+        // Regresi defect storage lokal: manager tidak boleh mem-parse path
+        // relatif menjadi URI (dulu crash "URI is not absolute"). Resolusi
+        // terhadap baseUrl adalah tanggung jawab ApiClient.
+        newManager((path, launcher) -> started.set(true), detector()).handle(updates("dep-1", "ASSIGNED"));
+
+        assertEquals("/api/v1/agents/artifacts/rel-1/file", api.lastDownloadUrl);
+        assertEquals(List.of("DOWNLOADING", "VERIFYING", "INSTALLING", "STARTING", "SUCCESS"),
+                api.statusSequence);
+    }
+
+    @Test
     void tanpaDeploymentIdAtauStatusTerminalTidakAdaAksi() {
         newManager((path, launcher) -> { }, detector())
                 .handle(new Dto.UpdatesResponse(true, "2.0.0", "/x", null, "2.0.0", null));
@@ -240,6 +286,8 @@ class DeploymentManagerTest {
         byte[] payload;
         final List<String> statusSequence = new ArrayList<>();
         String lastErrorMessage;
+        String lastDownloadUrl;
+        RuntimeException reportError;
 
         @Override
         public Dto.DownloadInfo getDownloadInfo(String token, String downloadUrlOrPath) {
@@ -247,7 +295,8 @@ class DeploymentManagerTest {
         }
 
         @Override
-        public void download(URI url, String deviceToken, Path target) throws IOException {
+        public void download(String urlOrPath, String deviceToken, Path target) throws IOException {
+            lastDownloadUrl = urlOrPath;
             Files.write(target, payload);
         }
 
@@ -256,6 +305,9 @@ class DeploymentManagerTest {
             statusSequence.add(request.status());
             if (request.errorMessage() != null) {
                 lastErrorMessage = request.errorMessage();
+            }
+            if (reportError != null) {
+                throw reportError;
             }
         }
     }
