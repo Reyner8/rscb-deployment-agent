@@ -157,8 +157,9 @@ class ApiClientTest {
     void downloadJalurLokalMengirimHeaderDeviceDanMenulisFile() throws IOException {
         Path target = tempDir.resolve("downloads/artifact.zip");
 
-        client.download(client.resolveUri("/api/v1/agents/artifacts/rel-1/file"), "token-abc", target);
+        client.download("/api/v1/agents/artifacts/rel-1/file", "token-abc", target);
 
+        assertEquals("/api/v1/agents/artifacts/rel-1/file", lastPath.get());
         assertEquals("ZIP!", Files.readString(target));
         assertEquals("token-abc", lastApiKey.get());
         assertFalse(Files.exists(target.resolveSibling("artifact.zip.part")), "file .part dibersihkan");
@@ -170,7 +171,8 @@ class ApiClientTest {
         String presigned = "http://127.0.0.1:" + server.getAddress().getPort()
                 + "/api/v1/agents/artifacts/rel-1/file";
 
-        client.download(URI.create(presigned), null, target);
+        // token tetap dikirim — presigned absolut tidak boleh menyertakan header.
+        client.download(presigned, "token-abc", target);
 
         assertEquals("ZIP!", Files.readString(target));
         assertNull(lastApiKey.get());
