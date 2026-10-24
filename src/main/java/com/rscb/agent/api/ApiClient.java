@@ -71,14 +71,17 @@ public class ApiClient {
     }
 
     /**
-     * Mengunduh artifact secara streaming ke {@code target}. Bila
-     * {@code deviceToken} non-null, request disertai header x-api-key
-     * (jalur storage lokal); presigned URL dikirim dengan token null.
+     * Mengunduh artifact secara streaming ke {@code target}. {@code urlOrPath}
+     * boleh path relatif (storage lokal — di-resolve terhadap baseUrl dan
+     * diunduh dengan header x-api-key bila {@code deviceToken} diisi) atau URL
+     * presigned MinIO absolut (diunduh tanpa header auth, token diabaikan).
      */
-    public void download(URI url, String deviceToken, Path target) throws IOException {
+    public void download(String urlOrPath, String deviceToken, Path target) throws IOException {
+        URI url = resolveUri(urlOrPath);
+        boolean relative = !urlOrPath.startsWith("http://") && !urlOrPath.startsWith("https://");
         LOG.log(System.Logger.Level.DEBUG, "Mengunduh {0} -> {1}", url, target);
         HttpRequest.Builder builder = HttpRequest.newBuilder(url).timeout(timeout).GET();
-        if (deviceToken != null && !deviceToken.isBlank()) {
+        if (relative && deviceToken != null && !deviceToken.isBlank()) {
             builder.header("x-api-key", deviceToken);
         }
         HttpResponse<InputStream> response;
