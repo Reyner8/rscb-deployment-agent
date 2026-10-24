@@ -34,7 +34,9 @@ public final class RetryUtil {
         throw new IllegalStateException("Tidak terjangkau");
     }
 
-    private static boolean isClientError(Exception e) {
+    /** Error 4xx tidak diulang — server sudah menjawab pasti. Public untuk
+     * pemanggil yang perlu membedakan penolakan server dari kegagalan jaringan. */
+    public static boolean isClientError(Exception e) {
         return e instanceof ApiException apiException
                 && apiException.getStatusCode() >= 400
                 && apiException.getStatusCode() < 500;
