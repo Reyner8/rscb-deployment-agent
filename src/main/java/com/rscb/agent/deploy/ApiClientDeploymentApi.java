@@ -4,7 +4,6 @@ import com.rscb.agent.api.ApiClient;
 import com.rscb.agent.api.Dto;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Path;
 
 /** Adapter {@link DeploymentApi} di atas {@link ApiClient} untuk dipakai Main. */
@@ -22,8 +21,8 @@ public class ApiClientDeploymentApi implements DeploymentApi {
     }
 
     @Override
-    public void download(URI url, String deviceToken, Path target) throws IOException {
-        client.download(url, deviceToken, target);
+    public void download(String urlOrPath, String deviceToken, Path target) throws IOException {
+        client.download(urlOrPath, deviceToken, target);
     }
 
     @Override
