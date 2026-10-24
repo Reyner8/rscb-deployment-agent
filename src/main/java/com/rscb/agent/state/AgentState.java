@@ -15,6 +15,8 @@ public class AgentState {
     private String lastDeploymentId;
     private String lastDeploymentResult;
     private String lastDeploymentVersion;
+    /** Pesan kegagalan laporan status terakhir ke server (null = terkirim). */
+    private String lastReportError;
     private String updatedAt;
 
     public String getDeviceId() {
@@ -63,6 +65,14 @@ public class AgentState {
 
     public void setLastDeploymentVersion(String lastDeploymentVersion) {
         this.lastDeploymentVersion = lastDeploymentVersion;
+    }
+
+    public String getLastReportError() {
+        return lastReportError;
+    }
+
+    public void setLastReportError(String lastReportError) {
+        this.lastReportError = lastReportError;
     }
 
     public String getUpdatedAt() {
