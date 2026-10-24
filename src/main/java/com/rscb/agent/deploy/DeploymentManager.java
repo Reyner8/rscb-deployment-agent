@@ -1,5 +1,6 @@
 package com.rscb.agent.deploy;
 
+import com.rscb.agent.api.ApiException;
 import com.rscb.agent.api.Dto;
 import com.rscb.agent.api.RetryUtil;
 import com.rscb.agent.config.AgentConfig;
@@ -8,7 +9,6 @@ import com.rscb.agent.state.StateStore;
 import com.rscb.agent.update.UpdateHandler;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -66,18 +66,22 @@ public class DeploymentManager implements UpdateHandler {
 
     @Override
     public void handle(Dto.UpdatesResponse updates) {
-        if (!updates.hasUpdate()) {
+        if (updates.deploymentStatus() != null
+                && TERMINAL_STATUSES.contains(updates.deploymentStatus())) {
             return;
         }
         String deploymentId = updates.deploymentId();
         if (deploymentId == null || deploymentId.isBlank()) {
-            LOG.log(System.Logger.Level.INFO,
-                    "Update {0} tersedia, menunggu admin membuat deployment", updates.latestVersion());
+            if (updates.hasUpdate()) {
+                LOG.log(System.Logger.Level.INFO,
+                        "Update {0} tersedia, menunggu admin membuat deployment", updates.latestVersion());
+            }
             return;
         }
-        if (updates.deploymentStatus() != null && TERMINAL_STATUSES.contains(updates.deploymentStatus())) {
-            return;
-        }
+        // Deployment non-terminal dikirim server setiap polling — termasuk
+        // saat versi lokal sudah terbaru — supaya alur yang terputus (agent
+        // mati di tengah instalasi) dapat dilanjutkan tanpa menunggu
+        // deployment baru dibuat.
         if (!deploying.compareAndSet(false, true)) {
             LOG.log(System.Logger.Level.DEBUG, "Deployment masih berjalan, cek update dilewati");
             return;
@@ -119,7 +123,7 @@ public class DeploymentManager implements UpdateHandler {
                 return;
             }
             zip = files.downloadsDir().resolve("artifact-" + deploymentId + ".zip");
-            downloadArtifact(URI.create(info.downloadUrl()), zip);
+            downloadArtifact(info.downloadUrl(), zip);
 
             // ---- VERIFYING ---------------------------------------------------
             report(deploymentId, "VERIFYING", "Memverifikasi SHA-256 artifact", null);
@@ -192,11 +196,6 @@ public class DeploymentManager implements UpdateHandler {
             }
 
             // ---- SUCCESS --------------------------------------------------------
-            state.setCurrentVersion(targetVersion);
-            state.setLastDeploymentId(deploymentId);
-            state.setLastDeploymentResult("SUCCESS");
-            state.setLastDeploymentVersion(targetVersion);
-            stateStore.save(state);
             deleteQuietly(zip);
             try {
                 files.pruneBackups(config.backup().keep());
@@ -204,6 +203,15 @@ public class DeploymentManager implements UpdateHandler {
                 LOG.log(System.Logger.Level.WARNING, "Prune backup gagal: {0}", e.getMessage());
             }
             report(deploymentId, "SUCCESS", "Instalasi versi " + targetVersion + " selesai", null);
+            // State dipersist setelah laporan supaya agent-state.json mencatat
+            // hasil instalasi dan status laporannya sekaligus dalam satu
+            // tulisan atomik. Kegagalan laporan tidak membatalkan hasil lokal:
+            // instalasi sudah selesai dan lastReportError yang mencatatnya.
+            state.setCurrentVersion(targetVersion);
+            state.setLastDeploymentId(deploymentId);
+            state.setLastDeploymentResult("SUCCESS");
+            state.setLastDeploymentVersion(targetVersion);
+            stateStore.save(state);
             LOG.log(System.Logger.Level.INFO, "Deployment {0} sukses: versi {1}", deploymentId, targetVersion);
         } catch (Exception e) {
             deleteQuietly(zip);
@@ -220,12 +228,13 @@ public class DeploymentManager implements UpdateHandler {
 
     /**
      * Mengunduh artifact dengan bounded retry — unduhan utuh diulang saat
-     * koneksi terputus. URL presigned (absolute) diunduh tanpa header auth;
-     * path relatif (storage lokal) diunduh dengan token device.
+     * koneksi terputus. Path relatif (storage lokal) dan URL presigned
+     * (absolute) sama-sama diterima; resolusi terhadap baseUrl dan
+     * keputusan header auth ditangani ApiClient.
      */
-    private void downloadArtifact(URI url, Path target) throws Exception {
+    private void downloadArtifact(String urlOrPath, Path target) throws Exception {
         RetryUtil.withRetry(() -> {
-            api.download(url, url.isAbsolute() ? null : state.getToken(), target);
+            api.download(urlOrPath, state.getToken(), target);
             return Boolean.TRUE;
         }, 3, 2000, "unduh artifact");
     }
@@ -235,7 +244,12 @@ public class DeploymentManager implements UpdateHandler {
         report(deploymentId, "FAILED", null, errorMessage);
     }
 
-    /** Laporan status tidak boleh menghentikan proses lokal bila server sulit dihubungi. */
+    /**
+     * Laporan status tidak boleh menghentikan proses lokal bila server sulit
+     * dihubungi. Penolakan 4xx (server menolak isi laporan) dicatat sebagai
+     * ERROR dan disimpan di state agar divergensi dengan server terlihat,
+     * bukan hilang di log saja.
+     */
     private void report(String deploymentId, String status, String message, String errorMessage) {
         try {
             RetryUtil.withRetry(() -> {
@@ -243,9 +257,37 @@ public class DeploymentManager implements UpdateHandler {
                         new Dto.StatusReportRequest(status, message, errorMessage));
                 return Boolean.TRUE;
             }, 3, 1000, "lapor status " + status);
+            if (state.getLastReportError() != null) {
+                state.setLastReportError(null);
+                saveStateQuietly();
+            }
         } catch (Exception e) {
-            LOG.log(System.Logger.Level.WARNING, "Laporan status {0} gagal terkirim: {1}",
-                    status, e.getMessage());
+            if (RetryUtil.isClientError(e)) {
+                LOG.log(System.Logger.Level.ERROR, "Laporan status {0} ditolak server: {1}",
+                        status, e.getMessage());
+            } else {
+                LOG.log(System.Logger.Level.WARNING, "Laporan status {0} gagal terkirim: {1}",
+                        status, e.getMessage());
+            }
+            state.setLastReportError(status + ": " + describe(e));
+            saveStateQuietly();
+        }
+    }
+
+    private static String describe(Exception e) {
+        if (e instanceof ApiException apiError) {
+            return "HTTP " + apiError.getStatusCode() + ": " + e.getMessage();
+        }
+        return e.getMessage();
+    }
+
+    /** Menyimpan state tanpa pernah melempar — kegagalan disk tidak boleh
+     * mengubah alur laporan status. */
+    private void saveStateQuietly() {
+        try {
+            stateStore.save(state);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Simpan state gagal: {0}", e.getMessage());
         }
     }
 
